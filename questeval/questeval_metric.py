@@ -6,6 +6,8 @@ import logging
 from datasets import load_metric
 import spacy
 import torch
+from tqdm import tqdm
+
 from questeval import DIR, __version__
 from questeval.utils import (
     API_T2T,
@@ -33,7 +35,9 @@ class QuestEval:
         limit_sent: int = 5,
         reduction_multi_refs: Callable = max,
         no_cuda: bool = False,
-        use_cache: bool = True
+        use_cache: bool = True,
+        use_ref: bool = True,
+        log_dir: str = "logs",
     ) -> None:
         """
         Main class for the QuestEval metric
@@ -82,9 +86,10 @@ class QuestEval:
                 "Task is summarization but the weighter is deactivate. Set do_weighter=True to activate it when loading QuestEval."
             )
 
-        self.log_dir = os.path.join(DIR, 'logs')
+        self.log_dir = os.path.join(DIR, log_dir)
         self.hash_files = set(os.listdir(self.log_dir))
         self.use_cache = use_cache
+        self.use_ref = use_ref
 
         self.task = task
         self.language = language
@@ -191,7 +196,7 @@ class QuestEval:
             assert len(sources) == len(hypothesis)
 
         scores = []
-        for ex_idx in range(0, len(hypothesis), batch_size):
+        for ex_idx in tqdm(range(0, len(hypothesis), batch_size)):
             logging.info(f"Total examples: {len(hypothesis)}. Proceeding the examples {ex_idx}")
             batch_sources, batch_list_references = None, None
             if having_sources:
@@ -203,6 +208,9 @@ class QuestEval:
                 sources=batch_sources,
                 list_references=batch_list_references,
             )
+
+            # clear GPU cache between batches
+            torch.cuda.empty_cache()
 
         result = {'corpus_score': np.average(scores), 'ex_level_scores': scores}
         return result
@@ -622,6 +630,8 @@ class QuestEval:
 
         scores = []
         for compared_log in compared_logs:
+            if not self.use_ref and compared_log['type'] == "ref":
+                continue
             if compared_log['text'] == '' or hyp_log['text'] == '':
                 score = 0
             else:
